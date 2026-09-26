@@ -15,6 +15,17 @@ const PORT = process.env.PORT || 3000;
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
+// Enable CORS for external hosts (e.g. Vercel client-server routing)
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // Server-side Google GenAI initialization with required telemetry header
 const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY,
@@ -26,11 +37,12 @@ const ai = new GoogleGenAI({
 });
 
 // Health check endpoint
-app.get('/api/health', (req: Request, res: Response) => {
+app.get(['/api/health', '/health'], (req: Request, res: Response) => {
   res.json({
     status: 'ok',
     hasKey: !!process.env.GEMINI_API_KEY,
     timestamp: new Date().toISOString(),
+    environment: process.env.VERCEL ? 'vercel' : 'node',
   });
 });
 
@@ -59,7 +71,7 @@ async function generateContentWithRetry(params: any) {
 }
 
 // Primary Endpoint: Multilingual Transcript Analysis
-app.post('/api/analyze-transcript', async (req: Request, res: Response) => {
+app.post(['/api/analyze-transcript', '/analyze-transcript'], async (req: Request, res: Response) => {
   try {
     const { transcript, contextNotes } = req.body;
 
@@ -294,7 +306,7 @@ ${transcript}
 });
 
 // Audio File Transcription Endpoint
-app.post('/api/transcribe-audio', async (req: Request, res: Response) => {
+app.post(['/api/transcribe-audio', '/transcribe-audio'], async (req: Request, res: Response) => {
   try {
     const { audioBase64, mimeType = 'audio/mp3', contextNotes } = req.body;
 
@@ -371,7 +383,7 @@ Critical Transcription Rules:
 });
 
 // Follow-up Q&A Chat regarding the transcript
-app.post('/api/chat-transcript', async (req: Request, res: Response) => {
+app.post(['/api/chat-transcript', '/chat-transcript'], async (req: Request, res: Response) => {
   try {
     const { transcript, query, history = [] } = req.body;
 
@@ -412,7 +424,7 @@ User Question: ${query}
 });
 
 // Audio TTS Briefing Generation
-app.post('/api/generate-audio-briefing', async (req: Request, res: Response) => {
+app.post(['/api/generate-audio-briefing', '/generate-audio-briefing'], async (req: Request, res: Response) => {
   try {
     const { text, voice = 'Kore' } = req.body;
     if (!text) {
@@ -459,8 +471,16 @@ app.post('/api/generate-audio-briefing', async (req: Request, res: Response) => 
   }
 });
 
+// Export Express app for Vercel Serverless Functions
+export default app;
+export { app };
+
 // Setup Vite middleware in development or serve static files in production
 async function startServer() {
+  if (process.env.VERCEL) {
+    return;
+  }
+
   const isProd = process.env.NODE_ENV === 'production';
 
   if (!isProd) {
@@ -483,4 +503,7 @@ async function startServer() {
   });
 }
 
-startServer();
+// Only start standalone server when executed locally or in full Node environments (not Vercel serverless)
+if (!process.env.VERCEL) {
+  startServer();
+}

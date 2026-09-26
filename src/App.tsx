@@ -193,7 +193,13 @@ export default function App() {
 
       if (!transcribeRes.ok) {
         const errJson = await transcribeRes.json().catch(() => ({}));
-        throw new Error(errJson.error || 'Failed to transcribe audio file.');
+        if (transcribeRes.status === 404) {
+          throw new Error('API route /api/transcribe-audio returned 404 Not Found. Please ensure vercel.json and api/ routes are deployed, and GEMINI_API_KEY is configured in your Vercel Project Settings.');
+        }
+        if (transcribeRes.status === 413) {
+          throw new Error('Audio payload exceeds server limit (Vercel serverless request body limit is 4.5MB). Please upload a smaller audio clip or use the text transcript tab.');
+        }
+        throw new Error(errJson.error || `Failed to transcribe audio file (HTTP ${transcribeRes.status}).`);
       }
 
       const { transcript: extractedTranscript } = await transcribeRes.json();
