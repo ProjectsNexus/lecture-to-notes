@@ -1,0 +1,6 @@
+{
+  "name": "PolyglotScribe - Multilingual Transcript Intelligence",
+  "description": "AI-powered analysis of multi-language discussions: identify core concepts, conceptual summaries, structured notes, technical jargon, and context-dependent language insights.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
