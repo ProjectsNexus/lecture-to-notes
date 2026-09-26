@@ -42,6 +42,7 @@ import {
   formatTimeRemaining,
   SavedConversion 
 } from './utils/conversionStorage';
+import { processAudioIntoPayloadSafeChunks } from './utils/audioChunker';
 import { AnalysisResult } from './types';
 
 export default function App() {
@@ -164,58 +165,95 @@ export default function App() {
     }
   };
 
-  const handleAudioTranscribeAndAnalyze = async (
-    audioBase64: string,
-    mimeType: string,
-    file: File | null
-  ) => {
+  const handleAudioTranscribeAndAnalyze = async (file: File) => {
     setIsProcessingAudio(true);
     setAnalysisError(null);
-    setAudioProcessingStage('Transcribing audio with Gemini (speaker diarization & multilingual fidelity)...');
+    setAudioProcessingStage('Preparing audio in browser (resampling to 16kHz speech fidelity)...');
 
-    if (file) {
-      setUploadedAudioFile(file);
-      if (uploadedAudioUrl) URL.revokeObjectURL(uploadedAudioUrl);
-      setUploadedAudioUrl(URL.createObjectURL(file));
-    }
+    setUploadedAudioFile(file);
+    if (uploadedAudioUrl) URL.revokeObjectURL(uploadedAudioUrl);
+    setUploadedAudioUrl(URL.createObjectURL(file));
 
     try {
-      // Step 1: Transcribe Audio verbatim
-      const transcribeRes = await fetch('/api/transcribe-audio', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          audioBase64,
-          mimeType,
-          contextNotes: contextNotes.trim(),
-        }),
+      // Step 1: Client-side downsample and slice into payload-safe chunks (<3MB each)
+      // This eliminates Vercel 4.5MB serverless limits for files of ANY size
+      const chunks = await processAudioIntoPayloadSafeChunks(file, (msg) => {
+        setAudioProcessingStage(msg);
       });
 
-      if (!transcribeRes.ok) {
-        const errJson = await transcribeRes.json().catch(() => ({}));
-        if (transcribeRes.status === 404) {
-          throw new Error('API route /api/transcribe-audio returned 404 Not Found. Please ensure vercel.json and api/ routes are deployed, and GEMINI_API_KEY is configured in your Vercel Project Settings.');
-        }
-        if (transcribeRes.status === 413) {
-          throw new Error('Audio payload exceeds server limit (Vercel serverless request body limit is 4.5MB). Please upload a smaller audio clip or use the text transcript tab.');
-        }
-        throw new Error(errJson.error || `Failed to transcribe audio file (HTTP ${transcribeRes.status}).`);
+      if (chunks.length === 0) {
+        throw new Error('No audio data could be extracted from this file.');
       }
 
-      const { transcript: extractedTranscript } = await transcribeRes.json();
-      if (!extractedTranscript || !extractedTranscript.trim()) {
+      let runningTranscript = '';
+
+      // Step 2: Transcribe each chunk sequentially with continuous speaker & timing context
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const mins = Math.floor(chunk.startTimeSeconds / 60);
+        const secs = Math.floor(chunk.startTimeSeconds % 60);
+        const timeFormatted = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+        if (chunks.length > 1) {
+          setAudioProcessingStage(
+            `Transcribing part ${i + 1} of ${chunks.length} [${timeFormatted}] with Gemini...`
+          );
+        } else {
+          setAudioProcessingStage('Transcribing audio verbatim with Gemini (speaker diarization & multilingual fidelity)...');
+        }
+
+        const transcribeRes = await fetch('/api/transcribe-audio', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            audioBase64: chunk.base64,
+            mimeType: chunk.mimeType,
+            timeOffsetSeconds: chunk.startTimeSeconds,
+            chunkIndex: chunk.chunkIndex,
+            totalChunks: chunk.totalChunks,
+            previousTranscript: runningTranscript.slice(-400),
+            contextNotes: contextNotes.trim(),
+          }),
+        });
+
+        if (!transcribeRes.ok) {
+          const errJson = await transcribeRes.json().catch(() => ({}));
+          if (transcribeRes.status === 404) {
+            throw new Error(
+              'API route /api/transcribe-audio returned 404 Not Found. Please ensure vercel.json and api/ routes are deployed, and GEMINI_API_KEY is configured in your Vercel Project Settings.'
+            );
+          }
+          if (transcribeRes.status === 413) {
+            throw new Error(
+              `Chunk ${i + 1} exceeded payload limit. Please try again.`
+            );
+          }
+          throw new Error(
+            errJson.error || `Failed to transcribe audio chunk ${i + 1} of ${chunks.length} (HTTP ${transcribeRes.status}).`
+          );
+        }
+
+        const { transcript: chunkTranscript } = await transcribeRes.json();
+        if (chunkTranscript && chunkTranscript.trim()) {
+          runningTranscript = runningTranscript
+            ? `${runningTranscript}\n\n${chunkTranscript.trim()}`
+            : chunkTranscript.trim();
+        }
+      }
+
+      if (!runningTranscript || !runningTranscript.trim()) {
         throw new Error('No transcript dialogue could be extracted from this audio.');
       }
 
-      setTranscript(extractedTranscript);
+      setTranscript(runningTranscript);
 
-      // Step 2: Analyze the transcribed dialogue in the exact same 4-pillar way
+      // Step 3: Analyze the full transcribed dialogue with all 4 pillars
       setAudioProcessingStage('Extracting Core Concepts, Conceptual Summary, Structured Notes & Language Insights...');
       const analyzeRes = await fetch('/api/analyze-transcript', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          transcript: extractedTranscript,
+          transcript: runningTranscript,
           contextNotes: contextNotes.trim(),
         }),
       });
@@ -231,7 +269,7 @@ export default function App() {
       setFilterConceptTitle(null);
 
       // Auto-save conversion for next 3 months without logins
-      persistNewlyConverted(extractedTranscript, contextNotes.trim(), analysisData, file?.name);
+      persistNewlyConverted(runningTranscript, contextNotes.trim(), analysisData, file.name);
     } catch (err: any) {
       console.error('Audio transcribe & analyze error:', err);
       setAnalysisError(err.message || 'An error occurred during audio transcription or analysis.');

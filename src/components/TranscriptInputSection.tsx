@@ -20,7 +20,7 @@ interface TranscriptInputSectionProps {
   setContextNotes: (notes: string) => void;
   onAnalyze: () => void;
   isAnalyzing: boolean;
-  onAudioTranscribeAndAnalyze: (audioBase64: string, mimeType: string, audioFile: File | null) => Promise<void>;
+  onAudioTranscribeAndAnalyze: (file: File) => Promise<void>;
   isProcessingAudio: boolean;
   audioProcessingStage: string;
 }

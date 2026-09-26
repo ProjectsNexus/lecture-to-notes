@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 interface AudioUploadSectionProps {
-  onAudioTranscribeAndAnalyze: (audioBase64: string, mimeType: string, audioFile: File | null) => Promise<void>;
+  onAudioTranscribeAndAnalyze: (file: File) => Promise<void>;
   isProcessing: boolean;
   processingStage: string;
 }
@@ -24,7 +24,6 @@ export const AudioUploadSection: React.FC<AudioUploadSectionProps> = ({
   processingStage,
 }) => {
   const [audioFile, setAudioFile] = useState<File | null>(null);
-  const [audioBase64, setAudioBase64] = useState<string | null>(null);
   const [audioMimeType, setAudioMimeType] = useState<string>('audio/mp3');
   const [audioBlobUrl, setAudioBlobUrl] = useState<string | null>(null);
 
@@ -92,15 +91,6 @@ export const AudioUploadSection: React.FC<AudioUploadSectionProps> = ({
     if (audioBlobUrl) URL.revokeObjectURL(audioBlobUrl);
     const newUrl = URL.createObjectURL(file);
     setAudioBlobUrl(newUrl);
-
-    // Read base64
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const base64Data = result.split(',')[1];
-      setAudioBase64(base64Data);
-    };
-    reader.readAsDataURL(file);
   };
 
   // Recording controls
@@ -151,7 +141,6 @@ export const AudioUploadSection: React.FC<AudioUploadSectionProps> = ({
   const clearAudio = () => {
     if (audioBlobUrl) URL.revokeObjectURL(audioBlobUrl);
     setAudioFile(null);
-    setAudioBase64(null);
     setAudioBlobUrl(null);
     setIsPlaying(false);
     setCurrentTime(0);
@@ -170,8 +159,8 @@ export const AudioUploadSection: React.FC<AudioUploadSectionProps> = ({
   };
 
   const handleSubmit = async () => {
-    if (!audioBase64) return;
-    await onAudioTranscribeAndAnalyze(audioBase64, audioMimeType, audioFile);
+    if (!audioFile) return;
+    await onAudioTranscribeAndAnalyze(audioFile);
   };
 
   const formatFileSize = (bytes: number) => {
@@ -369,13 +358,13 @@ export const AudioUploadSection: React.FC<AudioUploadSectionProps> = ({
             <div className="text-xs text-slate-400 flex items-center gap-2">
               <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
               <span>
-                Gemini will transcribe multilingual audio, identify speakers, and extract core concepts & language insights.
+                Browser downsamples to 16kHz & slices into payload-safe chunks (Zero Vercel 4.5MB payload errors).
               </span>
             </div>
 
             <button
               onClick={handleSubmit}
-              disabled={isProcessing || !audioBase64}
+              disabled={isProcessing || !audioFile}
               className={`w-full sm:w-auto px-6 py-3 rounded-xl font-bold text-xs sm:text-sm tracking-wide shadow-xl flex items-center justify-center gap-2 transition-all ${
                 isProcessing
                   ? 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700'

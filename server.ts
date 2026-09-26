@@ -305,10 +305,18 @@ ${transcript}
   }
 });
 
-// Audio File Transcription Endpoint
+// Audio File Transcription Endpoint (supports single audio or chunked streams for large files)
 app.post(['/api/transcribe-audio', '/transcribe-audio'], async (req: Request, res: Response) => {
   try {
-    const { audioBase64, mimeType = 'audio/mp3', contextNotes } = req.body;
+    const { 
+      audioBase64, 
+      mimeType = 'audio/mp3', 
+      contextNotes,
+      timeOffsetSeconds = 0,
+      chunkIndex = 1,
+      totalChunks = 1,
+      previousTranscript = '',
+    } = req.body;
 
     if (!audioBase64) {
       return res.status(400).json({ error: 'Audio data is required.' });
@@ -320,8 +328,25 @@ app.post(['/api/transcribe-audio', '/transcribe-audio'], async (req: Request, re
       });
     }
 
+    const offsetMins = Math.floor(timeOffsetSeconds / 60);
+    const offsetSecs = Math.floor(timeOffsetSeconds % 60);
+    const offsetFormatted = `${String(offsetMins).padStart(2, '0')}:${String(offsetSecs).padStart(2, '0')}`;
+
+    const chunkInstruction = totalChunks > 1
+      ? `\nIMPORTANT TIMING NOTICE: This audio is Slice ${chunkIndex} of ${totalChunks} in a longer lecture. It begins at timestamp [${offsetFormatted}]. Format every speaker turn's timestamp starting from [${offsetFormatted}] onwards.`
+      : '';
+
+    const continuityContext = previousTranscript
+      ? `\nRecent preceding dialogue for speaker and naming consistency:
+"""
+${previousTranscript.slice(-350)}
+"""`
+      : '';
+
     const transcriptionPrompt = `You are an elite multilingual audio transcriber and computational linguist.
 Transcribe this recorded multi-language discussion audio verbatim into structured dialogue text.
+${chunkInstruction}
+${continuityContext}
 
 Critical Transcription Rules:
 1. Speaker Diarization & Timestamps:
@@ -332,7 +357,7 @@ Critical Transcription Rules:
 3. Technical & Cultural Terminology:
    - Accurately preserve technical jargon, acronyms, and culturally embedded concepts without omission.
 4. Clean Output:
-   - Output ONLY the formatted dialogue transcript text with timestamps. Do not add conversational conversational intro/outro or wrap in markdown fences.`;
+   - Output ONLY the formatted dialogue transcript text with timestamps. Do not add conversational intro/outro or wrap in markdown fences.`;
 
     const audioPart = {
       inlineData: {
